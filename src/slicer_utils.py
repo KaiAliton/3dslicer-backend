@@ -30,7 +30,6 @@ PRINTER_PROFILE = {
 }
 
 def find_slicer() -> str:
-    """Поиск пути к PrusaSlicer в системе"""
     try:
         if "PRUSA_SLICER_PATH" in os.environ:
             custom_path = Path(os.environ["PRUSA_SLICER_PATH"])
@@ -60,33 +59,31 @@ def find_slicer() -> str:
     except Exception as e:
         logger.exception("PrusaSlicer не найден")
         raise RuntimeError(
-            "Установите PrusaSlicer и добавьте в PATH или задайте PRUSA_SLICER_PATH"
+            "Install PrusaSlicer and add PATH or paste PRUSA_SLICER_PATH"
         ) from e
 
 def validate_infill(infill: int) -> float:
-    """Валидация значения заполнения (0-100%)"""
     if not 0 <= infill <= 100:
-        raise ValueError("Заполнение должно быть между 0 и 100%")
+        raise ValueError("Infill must be between 0 and 100%")
     return infill / 100
 
 def validate_model(mesh: trimesh.Trimesh) -> dict:
-    """Проверка модели на валидность"""
     errors = []
     
     # Проверка объема
     if abs(mesh.volume) < 1e-3:
-        errors.append("Нулевой объем модели")
+        errors.append("Null volume")
     
     # Проверка нормалей
     if not mesh.is_winding_consistent:
-        errors.append("Несогласованные нормали")
+        errors.append("Error validating normals")
     
     # Проверка размеров
     bed_size = PRINTER_PROFILE["bed_size"]
     model_size = mesh.bounding_box.extents
     if any(s > b for s, b in zip(model_size, bed_size)):
         errors.append(
-            f"Модель превышает размеры стола ({model_size} > {bed_size})"
+            f"Model volume is more than bed volume ({model_size} > {bed_size})"
         )
     
     return {
@@ -97,7 +94,6 @@ def validate_model(mesh: trimesh.Trimesh) -> dict:
     }
 
 def get_printing_parameters(gcode_path: Path) -> dict:
-    """Парсинг параметров печати из G-кода"""
     params = {
         "printing_time": "0h 0m",
         "total_filament_used_grams": 0.0,
