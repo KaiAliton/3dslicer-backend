@@ -1,4 +1,5 @@
 # tasks.py
+import logging
 from celery_app import celery
 from pathlib import Path
 import tempfile
@@ -16,7 +17,13 @@ from slicer_utils import (
     PRINTER_PROFILE
 )
 
-@celery.task(bind=True, max_retries=3)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s - [%(filename)s:%(lineno)d]'
+)
+logger = logging.getLogger(__name__)
+
+@celery.task(bind=True, max_retries=3, acks_late=True)
 def calculate_print_task(self, file_content, infill, material):
     self.update_state(state='PROGRESS', meta={'progress': 10})
     temp_dir = tempfile.mkdtemp()
@@ -67,6 +74,11 @@ def calculate_print_task(self, file_content, infill, material):
         }
         
     except Exception as e:
+        logger.error(f"Print calculation error: {str(e)}", exc_info=True)
         self.retry(exc=e, countdown=30)
+        return {"status": "error", "error": str(e)}
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception as cleanup_err:
+            logger.warning(f"Error cleaning temp directory: {str(cleanup_err)}")

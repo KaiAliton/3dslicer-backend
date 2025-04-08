@@ -1,12 +1,13 @@
 
+import platform
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from celery.result import AsyncResult
 from pathlib import Path
 import logging
+import asyncio
 from typing import Dict
-
 from slicer_utils import (
     validate_infill,
     PRINTER_PROFILE,
@@ -89,29 +90,49 @@ async def create_calculation_task(
 @app.get("/task/{task_id}")
 async def get_task_status(task_id: str) -> Dict:
     """
-    Получение статуса задачи по ID
+    Получение статуса задачи по ID с надежной обработкой ошибок
     """
     try:
         logger.info(f"Checking status for task: {task_id}")
         task = AsyncResult(task_id)
-        logger.info(f"Task state: {task.state}, info: {task.info}")
+        
+        # Создаем базовый ответ
         response = {
             "task_id": task_id,
-            "status": task.status,
+            "status": "pending",
             "result": None,
             "error": None
         }
-
-        if task.successful():
-            response["result"] = task.result.get("result")
-            response["status"] = "success"
-        elif task.failed():
-            response["status"] = "error"
-            response["error"] = str(task.result)
-
+        
+        try:
+            # Безопасно получаем статус
+            status = task.status
+            response["status"] = status
+            
+            # Проверяем завершенность задачи
+            if task.ready():
+                try:
+                    # Безопасно получаем результат
+                    if task.successful():
+                        result = task.result
+                        response["result"] = result.get("result") if isinstance(result, dict) else result
+                        response["status"] = "success"
+                    elif task.failed():
+                        response["status"] = "error"
+                        response["error"] = str(task.result) if task.result else "Task failed"
+                except Exception as result_err:
+                    logger.warning(f"Error fetching result: {str(result_err)}")
+                    response["status"] = "error"
+                    response["error"] = "Error retrieving task result"
+        except Exception as status_err:
+            logger.warning(f"Error fetching status: {str(status_err)}")
+            # Fallback to checking if task exists in database
+            response["status"] = "unknown"
+            
         return response
+        
     except Exception as e:
-        logger.error(f"Status check error: {str(e)}")
+        logger.error(f"Status check error: {str(e)}", exc_info=True)
         raise HTTPException(500, "Task status check failed")
 
 @app.get("/printer-specs")
@@ -121,9 +142,13 @@ async def get_printer_specs() -> Dict:
         "printer": PRINTER_PROFILE,
         "materials": list(FILAMENT_CONFIGS.keys())
     }
+    
 
 if __name__ == "__main__":
     import uvicorn
+    import asyncio
+    if platform.system() == "Windows":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
